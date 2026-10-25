@@ -1649,9 +1649,11 @@ class PPOTrainer(ABC):
             return batch
 
         # 1. compute log probs
+        calculate_sum_pi_squared = self.config.actor_rollout_ref.actor.get("calculate_sum_pi_squared", False)
         batch.extra_info.update(
             {
                 "calculate_entropy": True,
+                "calculate_sum_pi_squared": calculate_sum_pi_squared,
                 "compute_loss": False,
                 "temperature": self.config.actor_rollout_ref.rollout.temperature,
             }
@@ -1660,16 +1662,20 @@ class PPOTrainer(ABC):
         assert len(output) == len(batch)
 
         fields = ["entropy", "log_probs", "response_mask"]
+        if calculate_sum_pi_squared:
+            fields.append("sum_pi_squared")
         if self.config.actor_rollout_ref.rollout.calculate_log_probs:
             fields.extend(["responses", "rollout_log_probs"])
         data = tq.kv_batch_get(keys=batch.keys, partition_id=batch.partition_id, select_fields=fields)
 
-        # 2. write old_log_probs and entropy back to TransferQueue
+        # 2. write old_log_probs and entropy (and sum_pi_squared for the optimal token baseline) back to TransferQueue
         data["old_log_probs"] = response_from_nested(data.pop("log_probs"), data["response_mask"])
         data["entropy"] = response_from_nested(data.pop("entropy"), data["response_mask"])
-        batch = tq.kv_batch_put(
-            keys=batch.keys, partition_id=batch.partition_id, fields=data.select("old_log_probs", "entropy")
-        )
+        put_fields = ["old_log_probs", "entropy"]
+        if calculate_sum_pi_squared:
+            data["sum_pi_squared"] = response_from_nested(data.pop("sum_pi_squared"), data["response_mask"])
+            put_fields.append("sum_pi_squared")
+        batch = tq.kv_batch_put(keys=batch.keys, partition_id=batch.partition_id, fields=data.select(*put_fields))
 
         data = DataProto(batch=data.to_padded_tensor())
 
@@ -1744,6 +1750,8 @@ class PPOTrainer(ABC):
     def _compute_advantage(self, batch: KVBatchMeta, metrics: dict) -> KVBatchMeta:
         """Compute the advantage of the batch."""
         fields = ["uid", "response_mask", "rm_scores", "rollout_log_probs", "old_log_probs", "ref_log_prob", "values"]
+        if self.config.actor_rollout_ref.actor.get("calculate_sum_pi_squared", False):
+            fields.append("sum_pi_squared")
         data = tq.kv_batch_get(keys=batch.keys, partition_id=batch.partition_id, select_fields=fields)
 
         response_mask = data["response_mask"]
