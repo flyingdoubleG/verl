@@ -1641,6 +1641,11 @@ class PPOTrainer(ABC):
         rollout_corr_config = self.config.algorithm.get("rollout_correction", None)
         bypass_recomputing_logprobs = rollout_corr_config and rollout_corr_config.get("bypass_mode", False)
         if bypass_recomputing_logprobs:  # Use `rollout_log_probs`
+            if self.config.actor_rollout_ref.actor.get("calculate_sum_pi_squared", False):
+                raise ValueError(
+                    "actor.calculate_sum_pi_squared=True is not supported with rollout_correction.bypass_mode=True: "
+                    "bypass mode skips the actor forward pass that computes sum_pi_squared."
+                )
             data = tq.kv_batch_get(
                 keys=batch.keys, partition_id=batch.partition_id, select_fields=["rollout_log_probs"]
             )
@@ -1702,8 +1707,11 @@ class PPOTrainer(ABC):
     def _compute_ref_log_prob(self, batch: KVBatchMeta, metrics: dict) -> KVBatchMeta:
         """Compute the reference log prob of the batch."""
         # 1. compute log probs
+        # batch.extra_info still carries the old log prob flags; without resetting calculate_sum_pi_squared,
+        # the reference pass would overwrite the actor's sum_pi_squared in TransferQueue.
         metadata = {
             "calculate_entropy": False,
+            "calculate_sum_pi_squared": False,
             "compute_loss": False,
             "temperature": self.config.actor_rollout_ref.rollout.temperature,
         }

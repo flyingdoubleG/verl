@@ -136,3 +136,30 @@ def test_optimal_token_baseline_receives_sum_pi_squared(monkeypatch, adv_estimat
     advantages = fake_tq.store["advantages"]
     assert [len(row) for row in advantages.unbind()] == RESPONSE_LENS
     assert all(torch.isfinite(row).all() for row in advantages.unbind())
+
+
+@pytest.mark.parametrize("ref_in_actor", [True, False])
+def test_ref_log_prob_keeps_actor_sum_pi_squared(monkeypatch, ref_in_actor):
+    fake_tq = _fake_tq_with_actor_outputs()
+    monkeypatch.setattr(trainer_base, "tq", fake_tq)
+    trainer = _make_trainer(calculate_sum_pi_squared=True)
+    trainer.ref_in_actor = ref_in_actor
+    trainer.ref_policy_wg = MagicMock()
+    trainer.ref_policy_wg.compute_ref_log_prob.side_effect = lambda batch: list(batch.keys)
+    batch = _Batch(keys=["a", "b"], partition_id="train", extra_info={})
+
+    trainer._compute_old_log_prob(batch, metrics={})
+    trainer._compute_ref_log_prob(batch, metrics={})
+
+    # The reference pass must not compute (and so overwrite) sum_pi_squared.
+    assert batch.extra_info["calculate_sum_pi_squared"] is False
+
+
+def test_bypass_mode_rejects_sum_pi_squared(monkeypatch):
+    monkeypatch.setattr(trainer_base, "tq", _fake_tq_with_actor_outputs())
+    trainer = _make_trainer(calculate_sum_pi_squared=True)
+    trainer.config.algorithm.rollout_correction = {"bypass_mode": True}
+    batch = _Batch(keys=["a", "b"], partition_id="train", extra_info={})
+
+    with pytest.raises(ValueError, match="bypass_mode"):
+        trainer._compute_old_log_prob(batch, metrics={})
