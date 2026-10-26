@@ -162,10 +162,15 @@ def test_calculate_sum_pi_squared_from_logits_chunking(shape, chunk_size):
 
     assert actual.shape == expected.shape
     torch.testing.assert_close(actual, expected, atol=1e-10, rtol=1e-10)
-    if actual.numel():
-        (grad,) = torch.autograd.grad(actual.sum(), logits)
-        (expected_grad,) = torch.autograd.grad(expected.sum(), logits)
-        torch.testing.assert_close(grad, expected_grad, atol=1e-10, rtol=1e-10)
+    (grad,) = torch.autograd.grad(actual.sum(), logits)
+    (expected_grad,) = torch.autograd.grad(expected.sum(), logits)
+    torch.testing.assert_close(grad, expected_grad, atol=1e-10, rtol=1e-10)
+
+
+@pytest.mark.parametrize("chunk_size", [0, -1])
+def test_calculate_sum_pi_squared_from_logits_rejects_non_positive_chunk_size(chunk_size):
+    with pytest.raises(ValueError, match="chunk_size"):
+        calculate_sum_pi_squared_from_logits(torch.randn(4, 8), chunk_size=chunk_size)
 
 
 def test_expand_as_nested():

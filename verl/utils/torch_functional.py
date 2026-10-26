@@ -702,13 +702,18 @@ def calculate_sum_pi_squared_from_logits(logits: torch.Tensor, chunk_size: int =
     Returns:
         Sum of squared probabilities tensor (...).
     """
+    if chunk_size <= 0:
+        raise ValueError(f"chunk_size must be positive, got {chunk_size}")
+
+    def _sum_pi_squared(x: torch.Tensor) -> torch.Tensor:
+        return torch.exp(torch.logsumexp(2.0 * x, dim=-1) - 2.0 * torch.logsumexp(x, dim=-1))
+
     flat_logits = logits.reshape(-1, logits.shape[-1])
-    chunks = []
-    for start in range(0, flat_logits.shape[0], chunk_size):
-        chunk = flat_logits[start : start + chunk_size]
-        chunks.append(torch.exp(torch.logsumexp(2.0 * chunk, dim=-1) - 2.0 * torch.logsumexp(chunk, dim=-1)))
-    if not chunks:
-        return logits.new_empty(logits.shape[:-1])
+    if flat_logits.shape[0] <= chunk_size:
+        return _sum_pi_squared(logits)
+    chunks = [
+        _sum_pi_squared(flat_logits[start : start + chunk_size]) for start in range(0, flat_logits.shape[0], chunk_size)
+    ]
     return torch.cat(chunks).reshape(logits.shape[:-1])
 
 
